@@ -1,202 +1,250 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { useState, useEffect, createContext, useContext } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import axios from 'axios';
-import './index.css';
 
 const API = import.meta.env.VITE_API_URL || 'https://perfomity-cowork.onrender.com';
-axios.defaults.baseURL = API;
 
 // ─── AUTH CONTEXT ─────────────────────────────────────────────────────────────
 const AuthContext = createContext(null);
-
-export const useAuth = () => useContext(AuthContext);
-
 function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pc_user')); } catch { return null; }
+  });
+  const [token, setToken] = useState(() => localStorage.getItem('pc_token') || null);
 
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      axios.get('/api/auth/me')
-        .then(r => setUser(r.data))
-        .catch(() => { localStorage.removeItem('token'); delete axios.defaults.headers.common['Authorization']; })
-        .finally(() => setLoading(false));
-    } else setLoading(false);
-  }, []);
-
-  const login = async (email, password) => {
-    const r = await axios.post('/api/auth/login', { email, password });
-    localStorage.setItem('token', r.data.token);
-    axios.defaults.headers.common['Authorization'] = `Bearer ${r.data.token}`;
-    setUser(r.data.user);
-    return r.data;
+  const login = (u, t) => {
+    setUser(u); setToken(t);
+    localStorage.setItem('pc_user', JSON.stringify(u));
+    localStorage.setItem('pc_token', t);
   };
-
-  const register = async (name, email, password) => {
-    const r = await axios.post('/api/auth/register', { name, email, password });
-    localStorage.setItem('token', r.data.token);
-    axios.defaults.headers.common['Authorization'] = `Bearer ${r.data.token}`;
-    setUser(r.data.user);
-    return r.data;
-  };
-
   const logout = () => {
-    localStorage.removeItem('token');
-    delete axios.defaults.headers.common['Authorization'];
-    setUser(null);
+    setUser(null); setToken(null);
+    localStorage.removeItem('pc_user');
+    localStorage.removeItem('pc_token');
   };
-
-  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>;
+  const apiFetch = async (path, opts = {}) => {
+    const res = await fetch(`${API}${path}`, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers || {}) }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  };
+  return <AuthContext.Provider value={{ user, token, login, logout, apiFetch }}>{children}</AuthContext.Provider>;
 }
+const useAuth = () => useContext(AuthContext);
 
-// ─── SIDEBAR ──────────────────────────────────────────────────────────────────
-function Sidebar() {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
+// ─── STYLES ───────────────────────────────────────────────────────────────────
+const S = {
+  bg: '#0D0D0D', card: '#1A1A1A', border: '#2A2A2A', orange: '#FF4500',
+  orangeD: '#CC3700', text: '#F0F0F0', muted: '#888', green: '#22C55E', red: '#EF4444'
+};
+const css = `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: ${S.bg}; color: ${S.text}; font-family: 'DM Sans', system-ui, sans-serif; }
+  input, select, textarea {
+    background: #111; border: 1px solid ${S.border}; color: ${S.text};
+    border-radius: 8px; padding: 10px 14px; width: 100%; font-size: 14px;
+    outline: none; transition: border 0.2s;
+  }
+  input:focus, select:focus, textarea:focus { border-color: ${S.orange}; }
+  button { cursor: pointer; font-family: inherit; }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #111; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .fade { animation: fadeIn 0.3s ease; }
+`;
 
-  const navItems = [
-    { path: '/dashboard', icon: '▦', label: 'Dashboard' },
-    { path: '/clients', icon: '◈', label: 'Clients' },
-    { path: '/launch', icon: '⚡', label: 'Launch Campaign' },
-    { path: '/research', icon: '◎', label: 'Research' },
-    { path: '/reporting', icon: '▲', label: 'Reporting' },
-  ];
+// ─── SHARED COMPONENTS ────────────────────────────────────────────────────────
+const Btn = ({ children, onClick, variant = 'primary', disabled, style = {}, small }) => {
+  const base = {
+    padding: small ? '8px 16px' : '12px 24px',
+    borderRadius: 8, border: 'none', fontWeight: 600,
+    fontSize: small ? 13 : 14, transition: 'all 0.2s',
+    opacity: disabled ? 0.5 : 1, cursor: disabled ? 'not-allowed' : 'pointer', ...style
+  };
+  const variants = {
+    primary: { background: S.orange, color: '#fff' },
+    ghost: { background: 'transparent', color: S.muted, border: `1px solid ${S.border}` },
+    danger: { background: '#1f0000', color: S.red, border: `1px solid #3f0000` },
+    success: { background: '#052010', color: S.green, border: `1px solid #0a3020` }
+  };
+  return <button style={{ ...base, ...variants[variant] }} onClick={onClick} disabled={disabled}>{children}</button>;
+};
 
-  return (
-    <div className="sidebar">
-      <div className="sidebar-logo">PERFOMITY <span>COWORK</span></div>
-      <nav className="sidebar-nav">
-        {navItems.map(item => (
-          <button key={item.path} className={`nav-item ${location.pathname.startsWith(item.path) ? 'active' : ''}`}
-            onClick={() => navigate(item.path)}>
-            <span className="nav-icon">{item.icon}</span>
-            {item.label}
-          </button>
-        ))}
-      </nav>
-      <div className="sidebar-bottom">
-        <div className="user-pill">
-          <div className="user-avatar">{user?.name?.[0] || 'P'}</div>
-          <div>
-            <div className="user-name">{user?.name}</div>
-            <div className="user-email">{user?.email}</div>
-          </div>
-        </div>
-        <button className="btn btn-ghost btn-sm btn-block" style={{ marginTop: 8 }} onClick={logout}>Logout</button>
-      </div>
-    </div>
-  );
-}
+const Card = ({ children, style = {} }) => (
+  <div style={{ background: S.card, border: `1px solid ${S.border}`, borderRadius: 12, padding: 24, ...style }}>
+    {children}
+  </div>
+);
 
-// ─── PROTECTED LAYOUT ─────────────────────────────────────────────────────────
-function AppLayout({ children }) {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="loading-wrap"><div className="spinner"></div></div>;
-  if (!user) return <Navigate to="/login" />;
-  return (
-    <div className="app-layout">
-      <Sidebar />
-      <div className="main-content">{children}</div>
-    </div>
-  );
-}
+const Input = ({ label, ...props }) => (
+  <div style={{ marginBottom: 16 }}>
+    {label && <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</label>}
+    <input {...props} />
+  </div>
+);
 
-// ─── AUTH PAGES ───────────────────────────────────────────────────────────────
+const Toast = ({ msg, type }) => msg ? (
+  <div style={{
+    position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+    background: type === 'error' ? '#1f0000' : '#052010',
+    border: `1px solid ${type === 'error' ? S.red : S.green}`,
+    color: type === 'error' ? S.red : S.green,
+    padding: '14px 20px', borderRadius: 10, maxWidth: 360, fontSize: 14
+  }} className="fade">{msg}</div>
+) : null;
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
 function Login() {
-  const { login, user } = useAuth();
-  const navigate = useNavigate();
+  const { login } = useAuth();
+  const nav = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
-  if (user) return <Navigate to="/dashboard" />;
-
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = async () => {
     setLoading(true); setErr('');
     try {
-      await login(form.email, form.password);
-      navigate('/dashboard');
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Login failed');
-    } finally { setLoading(false); }
+      const res = await fetch(`${API}/api/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      login(data.user, data.token);
+      nav('/dashboard');
+    } catch (e) { setErr(e.message); } finally { setLoading(false); }
   };
 
   return (
-    <div className="auth-wrap">
-      <div className="auth-card">
-        <div className="auth-logo">PERFOMITY <span>COWORK</span></div>
-        <div className="auth-title">Welcome back</div>
-        <div className="auth-sub">Sign in to your Perfomity account</div>
-        {err && <div className="alert alert-error">{err}</div>}
-        <form onSubmit={submit}>
-          <div className="form-group">
-            <label className="form-label">Email</label>
-            <input className="form-input" type="email" placeholder="arihant@perfomitymedia.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ width: '100%', maxWidth: 400 }}>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: -1 }}>
+            <span style={{ color: S.text }}>PERFOMITY</span>{' '}
+            <span style={{ color: S.orange }}>COWORK</span>
           </div>
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <input className="form-input" type="password" placeholder="••••••••" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
+          <div style={{ color: S.muted, fontSize: 14, marginTop: 8 }}>Meta Ads Automation Platform</div>
+        </div>
+        <Card>
+          {err && <div style={{ color: S.red, marginBottom: 16, fontSize: 13, padding: '10px 14px', background: '#1f0000', borderRadius: 8 }}>{err}</div>}
+          <Input label="Email" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="you@perfomitymedia.com" />
+          <Input label="Password" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
+          <Btn onClick={submit} disabled={loading} style={{ width: '100%', marginTop: 8 }}>
+            {loading ? '⟳ Signing in...' : 'Sign In'}
+          </Btn>
+          <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: S.muted }}>
+            No account? <span style={{ color: S.orange, cursor: 'pointer' }} onClick={() => nav('/register')}>Register</span>
           </div>
-          <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
-        <div className="auth-footer">Don't have an account? <a onClick={() => navigate('/register')}>Create one</a></div>
+        </Card>
       </div>
     </div>
   );
 }
 
+// ─── REGISTER ─────────────────────────────────────────────────────────────────
 function Register() {
-  const { register, user } = useAuth();
-  const navigate = useNavigate();
+  const { login } = useAuth();
+  const nav = useNavigate();
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
-  if (user) return <Navigate to="/dashboard" />;
-
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = async () => {
     setLoading(true); setErr('');
     try {
-      await register(form.name, form.email, form.password);
-      navigate('/dashboard');
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Registration failed');
-    } finally { setLoading(false); }
+      const res = await fetch(`${API}/api/register`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      login(data.user, data.token);
+      nav('/dashboard');
+    } catch (e) { setErr(e.message); } finally { setLoading(false); }
   };
 
   return (
-    <div className="auth-wrap">
-      <div className="auth-card">
-        <div className="auth-logo">PERFOMITY <span>COWORK</span></div>
-        <div className="auth-title">Create account</div>
-        <div className="auth-sub">Set up your Perfomity Cowork</div>
-        {err && <div className="alert alert-error">{err}</div>}
-        <form onSubmit={submit}>
-          <div className="form-group">
-            <label className="form-label">Full Name</label>
-            <input className="form-input" placeholder="Arihant Jain" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ width: '100%', maxWidth: 400 }}>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{ fontSize: 28, fontWeight: 800 }}>
+            <span style={{ color: S.text }}>PERFOMITY</span> <span style={{ color: S.orange }}>COWORK</span>
           </div>
-          <div className="form-group">
-            <label className="form-label">Email</label>
-            <input className="form-input" type="email" placeholder="arihant@perfomitymedia.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+        </div>
+        <Card>
+          {err && <div style={{ color: S.red, marginBottom: 16, fontSize: 13 }}>{err}</div>}
+          <Input label="Full Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Arihant Jain" />
+          <Input label="Email" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+          <Input label="Password" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+          <Btn onClick={submit} disabled={loading} style={{ width: '100%', marginTop: 8 }}>
+            {loading ? '⟳ Creating account...' : 'Create Account'}
+          </Btn>
+          <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: S.muted }}>
+            Have account? <span style={{ color: S.orange, cursor: 'pointer' }} onClick={() => nav('/login')}>Sign in</span>
           </div>
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <input className="form-input" type="password" placeholder="Min 8 characters" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─── LAYOUT ───────────────────────────────────────────────────────────────────
+const navItems = [
+  { path: '/dashboard', icon: '▦', label: 'Dashboard' },
+  { path: '/clients', icon: '◉', label: 'Clients' },
+  { path: '/launch', icon: '⚡', label: 'Launch Campaign' },
+  { path: '/reporting', icon: '▲', label: 'Reporting' },
+  { path: '/research', icon: '◈', label: 'Research' },
+];
+
+function AppLayout({ children }) {
+  const { user, logout } = useAuth();
+  const nav = useNavigate();
+  const loc = useLocation();
+
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh' }}>
+      {/* Sidebar */}
+      <div style={{ width: 220, background: '#111', borderRight: `1px solid ${S.border}`, display: 'flex', flexDirection: 'column', position: 'fixed', top: 0, bottom: 0, left: 0 }}>
+        <div style={{ padding: '24px 20px 20px', borderBottom: `1px solid ${S.border}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.5 }}>
+            <span style={{ color: S.text }}>PERFOMITY</span><br />
+            <span style={{ color: S.orange }}>COWORK</span>
           </div>
-          <button className="btn btn-primary btn-block btn-lg" type="submit" disabled={loading}>
-            {loading ? 'Creating...' : 'Create Account'}
-          </button>
-        </form>
-        <div className="auth-footer">Already have an account? <a onClick={() => navigate('/login')}>Sign in</a></div>
+        </div>
+        <nav style={{ flex: 1, padding: '12px 12px' }}>
+          {navItems.map(item => {
+            const active = loc.pathname === item.path;
+            return (
+              <div key={item.path} onClick={() => nav(item.path)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                  borderRadius: 8, marginBottom: 4, cursor: 'pointer',
+                  background: active ? '#FF450015' : 'transparent',
+                  color: active ? S.orange : S.muted,
+                  fontSize: 14, fontWeight: active ? 600 : 400,
+                  transition: 'all 0.15s'
+                }}>
+                <span style={{ fontSize: 16 }}>{item.icon}</span>
+                {item.label}
+              </div>
+            );
+          })}
+        </nav>
+        <div style={{ padding: '16px 20px', borderTop: `1px solid ${S.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{user?.name}</div>
+          <div style={{ fontSize: 11, color: S.muted, marginBottom: 12 }}>{user?.email}</div>
+          <Btn onClick={logout} variant="ghost" small style={{ width: '100%' }}>Logout</Btn>
+        </div>
+      </div>
+      {/* Main */}
+      <div style={{ marginLeft: 220, flex: 1, padding: 32, maxWidth: 'calc(100vw - 220px)' }}>
+        {children}
       </div>
     </div>
   );
@@ -204,880 +252,669 @@ function Register() {
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const { apiFetch, user } = useAuth();
+  const [clients, setClients] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const nav = useNavigate();
 
   useEffect(() => {
-    axios.get('/api/reporting/overview')
-      .then(r => setData(r.data))
-      .finally(() => setLoading(false));
+    apiFetch('/api/clients').then(setClients).catch(() => {});
+    apiFetch('/api/campaign-logs').then(setLogs).catch(() => {});
   }, []);
 
-  if (loading) return <div className="loading-wrap"><div className="spinner"></div><div className="loading-text">Loading dashboard...</div></div>;
-
-  const t = data?.totals || {};
-  const campaigns = data?.campaigns || [];
+  const stats = [
+    { label: 'Total Clients', value: clients.length, icon: '◉' },
+    { label: 'Campaigns Launched', value: logs.length, icon: '⚡' },
+    { label: 'Total Ads Created', value: logs.reduce((a, l) => a + (l.adIds?.length || 0), 0), icon: '▦' },
+    { label: 'Total Budget/Day', value: `₹${logs.reduce((a, l) => a + (l.budget || 0), 0).toLocaleString()}`, icon: '₹' },
+  ];
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-title">Good morning, {user?.name?.split(' ')[0]} 👋</div>
-        <div className="page-subtitle">Here's your Perfomity Cowork overview</div>
+    <div className="fade">
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>
+        Good {new Date().getHours() < 12 ? 'morning' : 'afternoon'}, {user?.name?.split(' ')[0]} 👋
+      </h1>
+      <p style={{ color: S.muted, marginBottom: 32 }}>Here's your Perfomity Cowork overview.</p>
+
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 32 }}>
+        {stats.map(s => (
+          <Card key={s.label}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>{s.icon}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 4 }}>{s.value}</div>
+            <div style={{ fontSize: 13, color: S.muted }}>{s.label}</div>
+          </Card>
+        ))}
       </div>
 
-      <div className="metrics-grid">
-        <div className="metric-card">
-          <div className="metric-label">Total Spend</div>
-          <div className="metric-value gold">₹{(t.spend || 0).toFixed(0)}</div>
-          <div className="metric-sub">All campaigns</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Total Revenue</div>
-          <div className="metric-value green">₹{(t.revenue || 0).toFixed(0)}</div>
-          <div className="metric-sub">Attributed</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">ROAS</div>
-          <div className="metric-value blue">{(t.roas || 0).toFixed(2)}x</div>
-          <div className="metric-sub">Return on ad spend</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Purchases</div>
-          <div className="metric-value">{t.purchases || 0}</div>
-          <div className="metric-sub">Total conversions</div>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
-        <button className="btn btn-primary btn-lg" onClick={() => navigate('/launch')}>⚡ Launch Campaign</button>
-        <button className="btn btn-secondary" onClick={() => navigate('/clients')}>+ Add Client</button>
-        <button className="btn btn-ghost" onClick={() => navigate('/research')}>◎ Research Ads</button>
-      </div>
-
-      <div className="table-wrap">
-        <div className="table-header">
-          <div className="table-title">Recent Campaigns</div>
-          <button className="btn btn-ghost btn-sm" onClick={() => navigate('/reporting')}>View All</button>
-        </div>
-        {campaigns.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">⚡</div>
-            <div className="empty-title">No campaigns yet</div>
-            <div className="empty-sub">Launch your first campaign to see it here</div>
-            <button className="btn btn-primary" onClick={() => navigate('/launch')}>Launch Campaign</button>
+      {/* Quick actions */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 15, textTransform: 'uppercase', letterSpacing: 1, color: S.orange }}>Quick Actions</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <Btn onClick={() => nav('/launch')} style={{ width: '100%' }}>⚡ Launch New Campaign</Btn>
+            <Btn onClick={() => nav('/clients')} variant="ghost" style={{ width: '100%' }}>+ Add Client</Btn>
+            <Btn onClick={() => nav('/reporting')} variant="ghost" style={{ width: '100%' }}>▲ View Reports</Btn>
           </div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Campaign</th>
-                <th>Client</th>
-                <th>Status</th>
-                <th>Spend</th>
-                <th>ROAS</th>
-                <th>CPA</th>
-              </tr>
-            </thead>
-            <tbody>
-              {campaigns.slice(0, 10).map(c => (
-                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/reporting/${c.id}`)}>
-                  <td><div style={{ fontWeight: 500 }}>{c.name}</div></td>
-                  <td><span style={{ color: 'var(--muted)', fontSize: 12 }}>{c.clientName}</span></td>
-                  <td><span className={`badge badge-${c.status === 'ACTIVE' ? 'green' : c.status === 'PAUSED' ? 'gold' : 'gray'}`}>{c.status}</span></td>
-                  <td>₹{(c.metrics?.spend || 0).toFixed(0)}</td>
-                  <td style={{ color: 'var(--green)' }}>{(c.metrics?.roas || 0).toFixed(2)}x</td>
-                  <td>₹{(c.metrics?.cpa || 0).toFixed(0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        </Card>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 15, textTransform: 'uppercase', letterSpacing: 1, color: S.orange }}>Recent Launches</div>
+          {logs.length === 0 ? (
+            <div style={{ color: S.muted, fontSize: 14 }}>No campaigns launched yet.</div>
+          ) : logs.slice(0, 4).map(l => (
+            <div key={l._id} style={{ padding: '10px 0', borderBottom: `1px solid ${S.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{l.name}</div>
+                <div style={{ fontSize: 12, color: S.muted }}>{l.adIds?.length} ads · ₹{l.budget}/day</div>
+              </div>
+              <span style={{ fontSize: 11, color: '#f59e0b', background: '#1c1000', padding: '3px 8px', borderRadius: 4 }}>PAUSED</span>
+            </div>
+          ))}
+        </Card>
       </div>
     </div>
   );
 }
 
-// ─── CLIENTS PAGE ─────────────────────────────────────────────────────────────
+// ─── CLIENTS ──────────────────────────────────────────────────────────────────
 function Clients() {
+  const { apiFetch } = useAuth();
   const [clients, setClients] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
+  const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
+  const [form, setForm] = useState({ name: '', brand: '', website: '', adAccountId: '', accessToken: '', pageId: '', instagramId: '', pixelId: '', notes: '' });
+  const [toast, setToast] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const load = () => axios.get('/api/clients').then(r => setClients(r.data)).finally(() => setLoading(false));
-  useEffect(() => { load(); }, []);
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
-  const openNew = () => { setEditing(null); setForm({}); setErr(''); setShowModal(true); };
-  const openEdit = (c) => { setEditing(c); setForm(c); setErr(''); setShowModal(true); };
+  useEffect(() => { apiFetch('/api/clients').then(setClients).catch(() => {}); }, []);
 
-  const save = async (e) => {
-    e.preventDefault();
-    setSaving(true); setErr('');
+  const save = async () => {
+    setLoading(true);
     try {
-      if (editing) await axios.put(`/api/clients/${editing._id}`, form);
-      else await axios.post('/api/clients', form);
-      setShowModal(false);
-      load();
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Save failed');
-    } finally { setSaving(false); }
+      if (editing) {
+        const updated = await apiFetch(`/api/clients/${editing._id}`, { method: 'PUT', body: JSON.stringify(form) });
+        setClients(c => c.map(x => x._id === updated._id ? updated : x));
+        showToast('Client updated');
+      } else {
+        const created = await apiFetch('/api/clients', { method: 'POST', body: JSON.stringify(form) });
+        setClients(c => [created, ...c]);
+        showToast('Client added');
+      }
+      setShowForm(false); setEditing(null);
+      setForm({ name: '', brand: '', website: '', adAccountId: '', accessToken: '', pageId: '', instagramId: '', pixelId: '', notes: '' });
+    } catch (e) { showToast(e.message, 'error'); } finally { setLoading(false); }
   };
 
   const del = async (id) => {
     if (!confirm('Delete this client?')) return;
-    await axios.delete(`/api/clients/${id}`);
-    load();
+    await apiFetch(`/api/clients/${id}`, { method: 'DELETE' });
+    setClients(c => c.filter(x => x._id !== id));
+    showToast('Deleted');
   };
 
-  const f = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-
-  if (loading) return <div className="loading-wrap"><div className="spinner"></div></div>;
+  const edit = (c) => { setEditing(c); setForm(c); setShowForm(true); };
 
   return (
-    <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <div className="page-title">Clients</div>
-          <div className="page-subtitle">{clients.length} client{clients.length !== 1 ? 's' : ''} managed</div>
-        </div>
-        <button className="btn btn-primary" onClick={openNew}>+ Add Client</button>
+    <div className="fade">
+      <Toast msg={toast?.msg} type={toast?.type} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700 }}>Clients</h1>
+        <Btn onClick={() => { setShowForm(true); setEditing(null); setForm({ name: '', brand: '', website: '', adAccountId: '', accessToken: '', pageId: '', instagramId: '', pixelId: '', notes: '' }); }}>+ Add Client</Btn>
       </div>
+
+      {showForm && (
+        <Card style={{ marginBottom: 24 }}>
+          <div style={{ fontWeight: 700, marginBottom: 20, color: S.orange }}>{editing ? 'Edit Client' : 'New Client'}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <Input label="Client Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Uff Perfumes" />
+            <Input label="Brand / Product" value={form.brand} onChange={e => setForm({ ...form, brand: e.target.value })} placeholder="Uff Perfumes" />
+            <Input label="Website URL" value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} placeholder="https://uffperfumes.com" />
+            <Input label="Ad Account ID" value={form.adAccountId} onChange={e => setForm({ ...form, adAccountId: e.target.value })} placeholder="act_2832086990326522" />
+            <div style={{ gridColumn: '1/-1' }}>
+              <Input label="Access Token" value={form.accessToken} onChange={e => setForm({ ...form, accessToken: e.target.value })} placeholder="EAAxxxxxxxxx..." />
+            </div>
+            <Input label="Facebook Page ID" value={form.pageId} onChange={e => setForm({ ...form, pageId: e.target.value })} placeholder="123456789" />
+            <Input label="Instagram Account ID" value={form.instagramId} onChange={e => setForm({ ...form, instagramId: e.target.value })} placeholder="17841xxxxxx (optional)" />
+            <Input label="Pixel ID" value={form.pixelId} onChange={e => setForm({ ...form, pixelId: e.target.value })} placeholder="123456789 (optional)" />
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Notes</label>
+              <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} placeholder="Any notes about this client..." style={{ background: '#111', border: `1px solid ${S.border}`, color: S.text, borderRadius: 8, padding: '10px 14px', width: '100%', fontSize: 14, outline: 'none', resize: 'vertical' }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+            <Btn onClick={save} disabled={loading}>{loading ? '⟳ Saving...' : 'Save Client'}</Btn>
+            <Btn variant="ghost" onClick={() => { setShowForm(false); setEditing(null); }}>Cancel</Btn>
+          </div>
+        </Card>
+      )}
 
       {clients.length === 0 ? (
-        <div className="empty-state" style={{ background: 'var(--gray2)', border: '1px solid var(--border)', borderRadius: 12 }}>
-          <div className="empty-icon">◈</div>
-          <div className="empty-title">No clients yet</div>
-          <div className="empty-sub">Add your first client to start launching campaigns</div>
-          <button className="btn btn-primary" onClick={openNew}>+ Add Client</button>
-        </div>
+        <Card style={{ textAlign: 'center', padding: 48 }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>◉</div>
+          <div style={{ color: S.muted }}>No clients yet. Add your first client to get started.</div>
+        </Card>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+        <div style={{ display: 'grid', gap: 16 }}>
           {clients.map(c => (
-            <div key={c._id} className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+            <Card key={c._id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <div style={{ fontFamily: 'var(--fd)', fontSize: 16, fontWeight: 700 }}>{c.name}</div>
-                  <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 2 }}>{c.brand}</div>
+                  <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 4 }}>{c.name}</div>
+                  <div style={{ fontSize: 13, color: S.muted, marginBottom: 8 }}>{c.website}</div>
+                  <div style={{ display: 'flex', gap: 16, fontSize: 12, color: S.muted }}>
+                    <span>Ad Account: <span style={{ color: S.text }}>{c.adAccountId || '—'}</span></span>
+                    <span>Page ID: <span style={{ color: S.text }}>{c.pageId || '—'}</span></span>
+                    <span>Pixel: <span style={{ color: S.text }}>{c.pixelId || '—'}</span></span>
+                  </div>
+                  {c.accessToken && <div style={{ fontSize: 12, color: S.green, marginTop: 6 }}>✓ Access token saved</div>}
                 </div>
-                <span className={`badge ${c.active ? 'badge-green' : 'badge-gray'}`}>{c.active ? 'Active' : 'Inactive'}</span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Btn small variant="ghost" onClick={() => edit(c)}>Edit</Btn>
+                  <Btn small variant="danger" onClick={() => del(c._id)}>Delete</Btn>
+                </div>
               </div>
-              <div style={{ fontFamily: 'var(--fm)', fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>AD ACCOUNT</div>
-              <div style={{ fontSize: 12, marginBottom: 12, wordBreak: 'break-all' }}>{c.adAccountId || '—'}</div>
-              {c.pixelId && <div style={{ fontFamily: 'var(--fm)', fontSize: 11, color: 'var(--muted)' }}>PIXEL: {c.pixelId}</div>}
-              <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => openEdit(c)}>Edit</button>
-                <button className="btn btn-danger btn-sm" onClick={() => del(c._id)}>Delete</button>
-              </div>
-            </div>
+            </Card>
           ))}
-        </div>
-      )}
-
-      {showModal && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowModal(false)}>
-          <div className="modal">
-            <div className="modal-header">
-              <div className="modal-title">{editing ? 'Edit Client' : 'Add Client'}</div>
-              <button className="modal-close" onClick={() => setShowModal(false)}>✕</button>
-            </div>
-            <form onSubmit={save}>
-              <div className="modal-body">
-                {err && <div className="alert alert-error">{err}</div>}
-                <div className="form-row">
-                  <div className="form-group">
-                    <label className="form-label">Client Name <em>*</em></label>
-                    <input className="form-input" placeholder="e.g. Zukie Brand" value={form.name || ''} onChange={f('name')} required />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Brand / Product</label>
-                    <input className="form-input" placeholder="e.g. Zukie Perfumes" value={form.brand || ''} onChange={f('brand')} />
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Ad Account ID <em>*</em></label>
-                  <input className="form-input" placeholder="act_2832086990326522" value={form.adAccountId || ''} onChange={f('adAccountId')} required />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Meta Access Token <em>*</em></label>
-                  <input className="form-input" type="password" placeholder="EAAR3ttx..." value={form.metaAccessToken || ''} onChange={f('metaAccessToken')} required />
-                </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label className="form-label">Facebook Page ID <em>*</em></label>
-                    <input className="form-input" placeholder="123456789" value={form.pageId || ''} onChange={f('pageId')} required />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Pixel ID</label>
-                    <input className="form-input" placeholder="Optional" value={form.pixelId || ''} onChange={f('pixelId')} />
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Notes</label>
-                  <textarea className="form-input" placeholder="Any notes about this client..." value={form.notes || ''} onChange={f('notes')} />
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Client'}</button>
-              </div>
-            </form>
-          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ─── CAMPAIGN LAUNCHER ────────────────────────────────────────────────────────
+// ─── LAUNCH CAMPAIGN ──────────────────────────────────────────────────────────
 function Launch() {
+  const { apiFetch } = useAuth();
   const [step, setStep] = useState(0);
   const [clients, setClients] = useState([]);
-  const [form, setForm] = useState({
-    clientId: '', campaignName: '', objective: 'OUTCOME_TRAFFIC',
-    budgetType: 'ABO', totalBudget: '', conversionEvent: 'PURCHASE',
-    landingUrl: '', ctaType: 'SHOP_NOW', driveImageUrl: '',
-    as1_name: 'Broad — All India', as1_min: 18, as1_max: 45, as1_gender: 'all',
-    as2_name: '', as2_interests: '', as2_min: 18, as2_max: 45, as2_gender: 'all',
-    as3_name: '', as3_interests: '', as3_min: 18, as3_max: 45, as3_gender: 'all',
-    cp_product: '', cp_benefit: '', cp_tone: 'Direct and punchy', cp_cta: 'Shop Now'
-  });
-  const [copies, setCopies] = useState([]);
+  const [toast, setToast] = useState(null);
   const [generating, setGenerating] = useState(false);
-  const [genMsg, setGenMsg] = useState('');
   const [launching, setLaunching] = useState(false);
-  const [launchMsg, setLaunchMsg] = useState('');
+  const [copies, setCopies] = useState([]);
   const [result, setResult] = useState(null);
-  const [err, setErr] = useState('');
 
-  useEffect(() => { axios.get('/api/clients').then(r => setClients(r.data)); }, []);
+  const [brief, setBrief] = useState({
+    clientId: '', campaignName: '', brand: '', benefit: '', offer: '',
+    audience: '', tone: 'Direct and punchy', cta: 'Shop Now',
+    numVariants: 3
+  });
+  const [targeting, setTargeting] = useState({
+    ageMin: 18, ageMax: 45, countries: 'IN', genders: ''
+  });
+  const [budget, setBudget] = useState({
+    adsetDailyBudget: 999, numAdsets: 3,
+    websiteUrl: '', accessToken: '', adAccountId: '', pageId: ''
+  });
 
-  const f = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const selectedClient = clients.find(c => c._id === form.clientId);
-  const perAdset = form.totalBudget ? Math.floor(form.totalBudget / 3) : 0;
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
-  const buildTargeting = (min, max, gender, interests) => {
-    const t = { geo_locations: { countries: ['IN'] }, age_min: parseInt(min), age_max: parseInt(max) };
-    if (gender !== 'all') t.genders = [parseInt(gender)];
-    if (interests) {
-      const items = interests.split(',').map(s => ({ name: s.trim() })).filter(s => s.name);
-      if (items.length) t.flexible_spec = [{ interests: items }];
+  useEffect(() => { apiFetch('/api/clients').then(setClients).catch(() => {}); }, []);
+
+  // Auto-fill from client
+  const selectClient = (clientId) => {
+    setBrief(b => ({ ...b, clientId }));
+    const c = clients.find(x => x._id === clientId);
+    if (c) {
+      setBudget(b => ({
+        ...b,
+        websiteUrl: c.website || b.websiteUrl,
+        accessToken: c.accessToken || b.accessToken,
+        adAccountId: c.adAccountId || b.adAccountId,
+        pageId: c.pageId || b.pageId,
+      }));
+      setBrief(b => ({ ...b, clientId, brand: c.brand || b.brand }));
     }
-    return t;
   };
 
-  const generateCopy = async () => {
-    if (!form.cp_product || !form.cp_benefit) { setErr('Fill Product and Key Benefit'); return; }
-    setGenerating(true); setErr('');
-    const msgs = ['Analysing brief...', 'Writing headlines...', 'Crafting body copy...', 'Scoring ROAS potential...', 'Finalising...'];
-    let i = 0;
-    const iv = setInterval(() => { if (i < msgs.length) setGenMsg(msgs[i++]); }, 1200);
+  const generateCopies = async () => {
+    setGenerating(true);
     try {
-      const r = await axios.post('/api/generate', {
-        brand: selectedClient?.brand || form.cp_product,
-        benefit: form.cp_benefit,
-        offer: form.cp_product,
-        tone: form.cp_tone,
-        cta: form.cp_cta,
-        count: 3
+      const data = await apiFetch('/api/generate-copy', {
+        method: 'POST',
+        body: JSON.stringify({
+          brand: brief.brand, benefit: brief.benefit, offer: brief.offer,
+          audience: brief.audience, tone: brief.tone, cta: brief.cta,
+          numVariants: brief.numVariants
+        })
       });
-      setCopies(r.data.variants.slice(0, 3).map(v => ({ ...v, description: v.description || 'Shop now. Limited time.' })));
+      setCopies(data.variants);
+      setStep(2);
+    } catch (e) { showToast(e.message, 'error'); } finally { setGenerating(false); }
+  };
+
+  const launch = async () => {
+    setLaunching(true);
+    try {
+      const selectedCopies = copies.filter(c => c._selected !== false);
+      const data = await apiFetch('/api/launch-campaign', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId: brief.clientId,
+          campaignName: brief.campaignName,
+          adsetDailyBudget: budget.adsetDailyBudget,
+          numAdsets: budget.numAdsets,
+          copies: selectedCopies,
+          targeting: {
+            ageMin: targeting.ageMin,
+            ageMax: targeting.ageMax,
+            countries: targeting.countries.split(',').map(s => s.trim()),
+            genders: targeting.genders ? targeting.genders.split(',').map(Number) : []
+          },
+          websiteUrl: budget.websiteUrl,
+          accessToken: budget.accessToken,
+          adAccountId: budget.adAccountId,
+          pageId: budget.pageId
+        })
+      });
+      setResult(data);
       setStep(3);
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Generation failed');
-    } finally {
-      clearInterval(iv); setGenerating(false);
-    }
+    } catch (e) { showToast(e.message, 'error'); } finally { setLaunching(false); }
   };
 
-  const launchCampaign = async () => {
-    if (!form.clientId) { setErr('Select a client'); return; }
-    if (!form.campaignName) { setErr('Enter campaign name'); return; }
-    if (!form.totalBudget) { setErr('Enter budget'); return; }
-    if (!form.landingUrl) { setErr('Enter landing URL'); return; }
-    if (!copies.length) { setErr('Generate ad copy first'); return; }
-    if (form.objective === 'OUTCOME_SALES' && !selectedClient?.pixelId) {
-      setErr('Sales objective requires a Pixel ID. Add it in the Client settings or switch to Traffic.');
-      return;
-    }
-
-    setLaunching(true); setErr('');
-    const msgs = ['Creating campaign...', 'Creating adset 1 of 3...', 'Creating adset 2 of 3...', 'Creating adset 3 of 3...', 'Creating ads...', 'Saving to database...'];
-    let i = 0;
-    const iv = setInterval(() => { if (i < msgs.length) setLaunchMsg(msgs[i++]); }, 3000);
-
-    try {
-      const adsets = [
-        { name: form.as1_name || 'Broad — All India', targeting: buildTargeting(form.as1_min, form.as1_max, form.as1_gender, '') },
-        { name: form.as2_name || 'Interest 1', targeting: buildTargeting(form.as2_min, form.as2_max, form.as2_gender, form.as2_interests) },
-        { name: form.as3_name || 'Interest 2', targeting: buildTargeting(form.as3_min, form.as3_max, form.as3_gender, form.as3_interests) }
-      ];
-
-      const r = await axios.post('/api/campaigns/launch', {
-        clientId: form.clientId,
-        campaignName: form.campaignName,
-        objective: form.objective,
-        budgetType: form.budgetType,
-        totalBudget: parseFloat(form.totalBudget),
-        conversionEvent: form.conversionEvent,
-        landingUrl: form.landingUrl,
-        ctaType: form.ctaType,
-        driveImageUrl: form.driveImageUrl,
-        adsets,
-        copies
-      });
-
-      setResult(r.data);
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Launch failed. Check your credentials and try again.');
-    } finally {
-      clearInterval(iv); setLaunching(false);
-    }
-  };
-
-  const steps = ['Campaign', 'Targeting', 'Ad Copy', 'Launch'];
-
-  if (result) return (
-    <div>
-      <div className="page-header">
-        <div className="page-title">Campaign Launched! 🎉</div>
-        <div className="page-subtitle">Check Meta Ads Manager to review and activate</div>
-      </div>
-      <div className="card" style={{ borderColor: 'var(--green)' }}>
-        <div style={{ color: 'var(--green)', fontFamily: 'var(--fd)', fontSize: 18, fontWeight: 700, marginBottom: 16 }}>✓ Campaign Created on Meta</div>
-        <div style={{ fontFamily: 'var(--fm)', fontSize: 12, color: 'var(--muted)', background: 'var(--gray3)', padding: 12, borderRadius: 8, marginBottom: 8, wordBreak: 'break-all' }}>
-          <strong style={{ color: 'var(--white)', display: 'block', marginBottom: 4 }}>Campaign ID</strong>
-          {result.metaCampaignId}
-        </div>
-        {result.campaign?.adsets?.map((a, i) => (
-          <div key={i} style={{ fontFamily: 'var(--fm)', fontSize: 12, color: 'var(--muted)', background: 'var(--gray3)', padding: 12, borderRadius: 8, marginBottom: 8 }}>
-            <strong style={{ color: 'var(--white)', display: 'block', marginBottom: 4 }}>Adset {i + 1}: {a.name}</strong>
-            ID: {a.metaAdsetId} · {a.ads?.length || 0} ads created
-            {a.ads?.some(ad => ad.error) && <div style={{ color: 'var(--red)', marginTop: 4 }}>Some ads had errors — add creatives manually in Ads Manager</div>}
-          </div>
-        ))}
-        <div style={{ marginTop: 16, display: 'flex', gap: 10 }}>
-          <button className="btn btn-primary" onClick={() => { setResult(null); setStep(0); setCopies([]); }}>Launch Another</button>
-          <button className="btn btn-ghost" onClick={() => window.open('https://adsmanager.facebook.com', '_blank')}>Open Ads Manager</button>
-        </div>
-      </div>
-    </div>
-  );
+  const steps = ['Campaign Brief', 'Targeting & Budget', 'Review Ad Copy', 'Launched'];
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-title">Launch Campaign</div>
-        <div className="page-subtitle">DCT structure — 1 Campaign · 3 Adsets · 3 Ads each</div>
-      </div>
+    <div className="fade">
+      <Toast msg={toast?.msg} type={toast?.type} />
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 28 }}>Launch Campaign</h1>
 
-      <div className="step-bar">
+      {/* Step indicator */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 32 }}>
         {steps.map((s, i) => (
-          <button key={i} className={`step-tab ${step === i ? 'active' : i < step ? 'done' : ''}`} onClick={() => { if (i < step || copies.length > 0) setStep(i); }}>
-            {i < step ? '✓ ' : ''}{s}
-          </button>
+          <div key={s} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600,
+              color: i === step ? S.orange : i < step ? S.green : S.muted,
+              borderBottom: `2px solid ${i === step ? S.orange : i < step ? S.green : S.border}`,
+              paddingBottom: 12, width: '100%'
+            }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11, fontWeight: 700,
+                background: i === step ? S.orange : i < step ? S.green : S.border,
+                color: i <= step ? '#fff' : S.muted
+              }}>{i < step ? '✓' : i + 1}</span>
+              {s}
+            </div>
+          </div>
         ))}
       </div>
 
-      {err && <div className="alert alert-error" style={{ marginBottom: 20 }}>{err}</div>}
-
-      {/* STEP 0: CAMPAIGN SETUP */}
+      {/* Step 0: Brief */}
       {step === 0 && (
-        <div style={{ maxWidth: 640 }}>
-          <div className="sec-title">Campaign Setup</div>
-          <div className="form-group">
-            <label className="form-label">Client <em>*</em></label>
-            <select className="form-input" value={form.clientId} onChange={f('clientId')}>
-              <option value="">Select a client</option>
-              {clients.map(c => <option key={c._id} value={c._id}>{c.name} — {c.brand}</option>)}
-            </select>
-          </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Campaign Name <em>*</em></label>
-              <input className="form-input" placeholder="e.g. Uff | Sales | Apr 26" value={form.campaignName} onChange={f('campaignName')} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Objective <em>*</em></label>
-              <select className="form-input" value={form.objective} onChange={f('objective')}>
-                <option value="OUTCOME_TRAFFIC">Traffic — Link Clicks</option>
-                <option value="OUTCOME_SALES">Sales — Conversions (Pixel needed)</option>
-                <option value="OUTCOME_LEADS">Leads</option>
-                <option value="OUTCOME_AWARENESS">Awareness</option>
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 20, color: S.orange, textTransform: 'uppercase', letterSpacing: 1, fontSize: 13 }}>Campaign Brief</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Select Client</label>
+              <select value={brief.clientId} onChange={e => selectClient(e.target.value)}>
+                <option value="">— Select client —</option>
+                {clients.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
               </select>
             </div>
-          </div>
-          {form.objective === 'OUTCOME_SALES' && (
-            <div className="info-box">
-              <strong>Pixel Required</strong>
-              Sales objective needs a Pixel ID set in your client settings. Current pixel: {selectedClient?.pixelId || 'Not set — go to Clients to add it'}
+            <Input label="Campaign Name" value={brief.campaignName} onChange={e => setBrief({ ...brief, campaignName: e.target.value })} placeholder="Uff Perfumes - Buy2Get1 - Apr 2026" />
+            <Input label="Brand / Product" value={brief.brand} onChange={e => setBrief({ ...brief, brand: e.target.value })} placeholder="Uff Perfumes — long-lasting Indian fragrances" />
+            <Input label="Key Benefit" value={brief.benefit} onChange={e => setBrief({ ...brief, benefit: e.target.value })} placeholder="Lasts 12+ hours, premium scent" />
+            <div style={{ gridColumn: '1/-1' }}>
+              <Input label="Offer / Promotion" value={brief.offer} onChange={e => setBrief({ ...brief, offer: e.target.value })} placeholder="Buy 2 Get 1 FREE — limited time" />
             </div>
-          )}
-          <div className="form-group">
-            <label className="form-label">Budget Type</label>
-            <div className="toggle-row">
-              <button type="button" className={`toggle-opt ${form.budgetType === 'ABO' ? 'active' : ''}`} onClick={() => setForm({ ...form, budgetType: 'ABO' })}>ABO — Per Adset</button>
-              <button type="button" className={`toggle-opt ${form.budgetType === 'CBO' ? 'active' : ''}`} onClick={() => setForm({ ...form, budgetType: 'CBO' })}>CBO — Campaign</button>
-            </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Total Daily Budget ₹ <em>*</em></label>
-            <input className="form-input" type="number" placeholder="e.g. 3000" value={form.totalBudget} onChange={f('totalBudget')} />
-          </div>
-          {perAdset > 0 && (
-            <div className="budget-pill">
-              <div><div className="bp-label">Per Adset / Day</div><div className="bp-sub">Equal split · 3 adsets</div></div>
-              <div style={{ textAlign: 'right' }}><div className="bp-val">₹{perAdset}</div><div className="bp-sub">{form.budgetType}</div></div>
-            </div>
-          )}
-          {form.objective === 'OUTCOME_SALES' && (
-            <div className="form-group">
-              <label className="form-label">Conversion Event</label>
-              <select className="form-input" value={form.conversionEvent} onChange={f('conversionEvent')}>
-                <option value="PURCHASE">Purchase</option>
-                <option value="ADD_TO_CART">Add to Cart</option>
-                <option value="INITIATE_CHECKOUT">Initiate Checkout</option>
-                <option value="LEAD">Lead</option>
-                <option value="VIEW_CONTENT">View Content</option>
-              </select>
-            </div>
-          )}
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Landing Page URL <em>*</em></label>
-              <input className="form-input" type="url" placeholder="https://yourstore.com" value={form.landingUrl} onChange={f('landingUrl')} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">CTA Button</label>
-              <select className="form-input" value={form.ctaType} onChange={f('ctaType')}>
-                <option value="SHOP_NOW">Shop Now</option>
-                <option value="BUY_NOW">Buy Now</option>
-                <option value="LEARN_MORE">Learn More</option>
-                <option value="SIGN_UP">Sign Up</option>
-                <option value="GET_OFFER">Get Offer</option>
-              </select>
-            </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Creative URL (Google Drive direct link or image URL)</label>
-            <input className="form-input" placeholder="https://drive.google.com/uc?export=download&id=..." value={form.driveImageUrl} onChange={f('driveImageUrl')} />
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>For Drive: File → Share → Copy link → convert to direct download URL. Format: drive.google.com/uc?export=download&id=FILE_ID</div>
-          </div>
-          <button className="btn btn-primary btn-lg" onClick={() => { if (!form.clientId || !form.campaignName || !form.totalBudget || !form.landingUrl) { setErr('Fill all required fields'); return; } setErr(''); setStep(1); }}>
-            Next → Targeting
-          </button>
-        </div>
-      )}
-
-      {/* STEP 1: TARGETING */}
-      {step === 1 && (
-        <div style={{ maxWidth: 640 }}>
-          <div className="info-box"><strong>DCT Testing Framework</strong>Adset 1 = Broad (Meta finds buyers). Adsets 2 & 3 = Your best interest segments. Equal budget split.</div>
-
-          {[1, 2, 3].map(n => (
-            <div key={n} className="adset-block">
-              <div className="adset-header">
-                <div className="adset-title">Adset {n}</div>
-                <div className="adset-badge">{n === 1 ? 'Broad' : `Interest ${n - 1}`}</div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Adset Name</label>
-                <input className="form-input" placeholder={n === 1 ? 'Broad — All India' : `Interest ${n - 1}`} value={form[`as${n}_name`]} onChange={f(`as${n}_name`)} />
-              </div>
-              {n > 1 && (
-                <div className="form-group">
-                  <label className="form-label">Interests (comma separated)</label>
-                  <input className="form-input" placeholder="e.g. Perfume, Fragrance, Luxury" value={form[`as${n}_interests`]} onChange={f(`as${n}_interests`)} />
-                </div>
-              )}
-              <div className="form-row-3">
-                <div className="form-group">
-                  <label className="form-label">Age Min</label>
-                  <input className="form-input" type="number" value={form[`as${n}_min`]} onChange={f(`as${n}_min`)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Age Max</label>
-                  <input className="form-input" type="number" value={form[`as${n}_max`]} onChange={f(`as${n}_max`)} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Gender</label>
-                  <select className="form-input" value={form[`as${n}_gender`]} onChange={f(`as${n}_gender`)}>
-                    <option value="all">All</option>
-                    <option value="1">Men</option>
-                    <option value="2">Women</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          ))}
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn btn-ghost" onClick={() => setStep(0)}>← Back</button>
-            <button className="btn btn-primary btn-lg" onClick={() => { setErr(''); setStep(2); }}>Next → Ad Copy</button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 2: AD COPY */}
-      {step === 2 && (
-        <div style={{ maxWidth: 640 }}>
-          <div className="info-box"><strong>Claude generates 3 variations</strong>One per ad. Each gets a unique angle, headline, and primary text. All editable after generation.</div>
-          <div className="form-group">
-            <label className="form-label">Product / Offer <em>*</em></label>
-            <input className="form-input" placeholder="e.g. Uff Perfumes — Buy 2 Get 1 Free" value={form.cp_product} onChange={f('cp_product')} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Key Benefit <em>*</em></label>
-            <input className="form-input" placeholder="e.g. Affordable luxury, long lasting fragrance" value={form.cp_benefit} onChange={f('cp_benefit')} />
-          </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Tone</label>
-              <select className="form-input" value={form.cp_tone} onChange={f('cp_tone')}>
+            <Input label="Target Audience" value={brief.audience} onChange={e => setBrief({ ...brief, audience: e.target.value })} placeholder="Urban Indian men & women 22-40" />
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Tone</label>
+              <select value={brief.tone} onChange={e => setBrief({ ...brief, tone: e.target.value })}>
                 <option>Direct and punchy</option>
+                <option>Aspirational and premium</option>
+                <option>Friendly and conversational</option>
                 <option>Urgent and FOMO-driven</option>
-                <option>Conversational and friendly</option>
-                <option>Premium and refined</option>
-                <option>Energetic and bold</option>
+                <option>Story-driven / founder angle</option>
               </select>
             </div>
-            <div className="form-group">
-              <label className="form-label">CTA Text</label>
-              <select className="form-input" value={form.cp_cta} onChange={f('cp_cta')}>
-                <option>Shop Now</option>
-                <option>Buy Now</option>
-                <option>Get Offer</option>
-                <option>Claim Deal</option>
-                <option>Learn More</option>
+            <Input label="CTA Text" value={brief.cta} onChange={e => setBrief({ ...brief, cta: e.target.value })} placeholder="Shop Now" />
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Ad Variants to Generate</label>
+              <select value={brief.numVariants} onChange={e => setBrief({ ...brief, numVariants: Number(e.target.value) })}>
+                <option value={3}>3 variants</option>
+                <option value={5}>5 variants</option>
               </select>
             </div>
           </div>
+          <div style={{ marginTop: 24 }}>
+            <Btn onClick={() => setStep(1)} disabled={!brief.campaignName || !brief.brand || !brief.benefit || !brief.offer}>
+              Next: Targeting & Budget →
+            </Btn>
+          </div>
+        </Card>
+      )}
 
-          {generating ? (
-            <div className="loading-wrap"><div className="spinner"></div><div className="loading-text">{genMsg}</div></div>
-          ) : (
-            <button className="btn btn-secondary btn-lg btn-block" onClick={generateCopy}>✦ Generate 3 Ad Variations with Claude</button>
-          )}
+      {/* Step 1: Targeting + Budget */}
+      {step === 1 && (
+        <Card>
+          <div style={{ fontWeight: 700, marginBottom: 20, color: S.orange, textTransform: 'uppercase', letterSpacing: 1, fontSize: 13 }}>Targeting & Budget</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <Input label="Age Min" type="number" value={targeting.ageMin} onChange={e => setTargeting({ ...targeting, ageMin: Number(e.target.value) })} />
+            <Input label="Age Max" type="number" value={targeting.ageMax} onChange={e => setTargeting({ ...targeting, ageMax: Number(e.target.value) })} />
+            <Input label="Countries (comma-separated)" value={targeting.countries} onChange={e => setTargeting({ ...targeting, countries: e.target.value })} placeholder="IN" />
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Gender</label>
+              <select value={targeting.genders} onChange={e => setTargeting({ ...targeting, genders: e.target.value })}>
+                <option value="">All genders</option>
+                <option value="1">Male only</option>
+                <option value="2">Female only</option>
+              </select>
+            </div>
+            <Input label="Daily Budget per Adset (₹)" type="number" value={budget.adsetDailyBudget} onChange={e => setBudget({ ...budget, adsetDailyBudget: Number(e.target.value) })} />
+            <div>
+              <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Number of Adsets</label>
+              <select value={budget.numAdsets} onChange={e => setBudget({ ...budget, numAdsets: Number(e.target.value) })}>
+                <option value={1}>1 adset</option>
+                <option value={2}>2 adsets</option>
+                <option value={3}>3 adsets</option>
+              </select>
+            </div>
+            <div style={{ gridColumn: '1/-1', padding: '12px 16px', background: '#111', borderRadius: 8, fontSize: 13, color: S.muted }}>
+              Total daily budget: <strong style={{ color: S.text }}>₹{budget.adsetDailyBudget * budget.numAdsets}/day</strong>
+            </div>
+            <Input label="Website URL" value={budget.websiteUrl} onChange={e => setBudget({ ...budget, websiteUrl: e.target.value })} placeholder="https://uffperfumes.com/shop" />
+            <Input label="Facebook Page ID" value={budget.pageId} onChange={e => setBudget({ ...budget, pageId: e.target.value })} placeholder="From client record or Business Manager" />
+            {!brief.clientId && <>
+              <Input label="Ad Account ID (override)" value={budget.adAccountId} onChange={e => setBudget({ ...budget, adAccountId: e.target.value })} placeholder="act_2832086990326522" />
+              <Input label="Access Token (override)" value={budget.accessToken} onChange={e => setBudget({ ...budget, accessToken: e.target.value })} placeholder="EAAxxxxxx..." />
+            </>}
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
+            <Btn variant="ghost" onClick={() => setStep(0)}>← Back</Btn>
+            <Btn onClick={generateCopies} disabled={generating || !budget.websiteUrl || !budget.pageId}>
+              {generating ? <><span className="spin">⟳</span> Generating AI copies...</> : '⚡ Generate Ad Copies →'}
+            </Btn>
+          </div>
+        </Card>
+      )}
 
-          {copies.length > 0 && (
-            <div style={{ marginTop: 20 }}>
-              <div className="sec-title">Generated Copies — Edit if needed</div>
-              {copies.map((c, i) => (
-                <div key={i} className="copy-card">
-                  <div className="copy-card-header">
-                    <span className="copy-angle">Variation {i + 1} · {c.angle}</span>
-                    <span className={`copy-score ${c.isHot ? 'hot' : ''}`}>{c.isHot ? '🔥 ' : ''}{c.score}</span>
+      {/* Step 2: Review copies */}
+      {step === 2 && (
+        <div>
+          <Card style={{ marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, textTransform: 'uppercase', letterSpacing: 1, color: S.orange }}>Review Ad Copies</div>
+                <div style={{ fontSize: 13, color: S.muted, marginTop: 4 }}>AI-generated variants — edit or deselect before launching</div>
+              </div>
+              <div style={{ fontSize: 13, color: S.muted }}>
+                Campaign: <strong style={{ color: S.text }}>{brief.campaignName}</strong> · Budget: <strong style={{ color: S.text }}>₹{budget.adsetDailyBudget * budget.numAdsets}/day</strong>
+              </div>
+            </div>
+          </Card>
+
+          <div style={{ display: 'grid', gap: 16, marginBottom: 24 }}>
+            {copies.map((copy, i) => (
+              <Card key={i} style={{ border: `1px solid ${copy._selected === false ? S.border : copy.isHot ? S.orange + '60' : S.border}`, opacity: copy._selected === false ? 0.5 : 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, color: S.muted, fontWeight: 600 }}>Ad {i + 1}</span>
+                    {copy.isHot && <span style={{ fontSize: 11, color: S.orange, background: '#FF450015', padding: '2px 8px', borderRadius: 4, fontWeight: 600 }}>🔥 TOP PICK</span>}
+                    <span style={{ fontSize: 11, color: S.muted }}>{copy.angle}</span>
+                    <span style={{ fontSize: 11, color: S.green }}>{copy.score}</span>
                   </div>
-                  <div className="form-group" style={{ marginBottom: 8 }}>
-                    <label className="form-label">Headline</label>
-                    <input className="form-input" value={c.headline} onChange={e => { const n = [...copies]; n[i].headline = e.target.value; setCopies(n); }} />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 8 }}>
-                    <label className="form-label">Primary Text</label>
-                    <textarea className="form-input" rows="3" value={c.primaryText} onChange={e => { const n = [...copies]; n[i].primaryText = e.target.value; setCopies(n); }} />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="form-label">Description</label>
-                    <input className="form-input" value={c.description || ''} onChange={e => { const n = [...copies]; n[i].description = e.target.value; setCopies(n); }} />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Btn small variant={copy._selected === false ? 'ghost' : 'success'} onClick={() => setCopies(c => c.map((x, j) => j === i ? { ...x, _selected: x._selected === false ? true : false } : x))}>
+                      {copy._selected === false ? 'Include' : '✓ Selected'}
+                    </Btn>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+                <div>
+                  <label style={{ fontSize: 11, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Headline</label>
+                  <input value={copy.headline} onChange={e => setCopies(c => c.map((x, j) => j === i ? { ...x, headline: e.target.value } : x))} style={{ marginTop: 4, marginBottom: 10 }} />
+                  <label style={{ fontSize: 11, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Primary Text</label>
+                  <textarea value={copy.primaryText} rows={3} onChange={e => setCopies(c => c.map((x, j) => j === i ? { ...x, primaryText: e.target.value } : x))}
+                    style={{ marginTop: 4, background: '#111', border: `1px solid ${S.border}`, color: S.text, borderRadius: 8, padding: '10px 14px', width: '100%', fontSize: 14, outline: 'none', resize: 'vertical' }} />
+                </div>
+              </Card>
+            ))}
+          </div>
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-            <button className="btn btn-ghost" onClick={() => setStep(1)}>← Back</button>
-            {copies.length > 0 && <button className="btn btn-primary btn-lg" onClick={() => { setErr(''); setStep(3); }}>Next → Launch</button>}
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Btn variant="ghost" onClick={() => setStep(1)}>← Back</Btn>
+            <Btn onClick={launch} disabled={launching}>
+              {launching ? <><span className="spin">⟳</span> Launching on Meta...</> : '⚡ Launch Campaign on Meta'}
+            </Btn>
           </div>
         </div>
       )}
 
-      {/* STEP 3: LAUNCH */}
-      {step === 3 && (
-        <div style={{ maxWidth: 640 }}>
-          <div className="info-box">
-            <strong>Ready to Launch</strong>
-            Campaign: {form.campaignName}<br />
-            Client: {selectedClient?.name}<br />
-            Budget: ₹{form.totalBudget}/day ({form.budgetType}) · ₹{perAdset}/adset<br />
-            Adsets: 3 · Ads: {copies.length * 3} total · All in PAUSED status
-          </div>
+      {/* Step 3: Success */}
+      {step === 3 && result && (
+        <Card style={{ textAlign: 'center', padding: 48 }} className="fade">
+          <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Campaign Created!</h2>
+          <p style={{ color: S.muted, marginBottom: 32 }}>Your campaign is live in Meta Ads Manager in PAUSED status. Review and activate when ready.</p>
 
-          <div className="sec-title">Summary — 3 Ad Copies to be used</div>
-          {copies.map((c, i) => (
-            <div key={i} style={{ background: 'var(--gray3)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8 }}>
-              <div style={{ fontFamily: 'var(--fm)', fontSize: 10, color: 'var(--accent)', marginBottom: 6 }}>Ad {i + 1}</div>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{c.headline}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{c.primaryText}</div>
-            </div>
-          ))}
-
-          {launching ? (
-            <div className="loading-wrap"><div className="spinner"></div><div className="loading-text">{launchMsg}</div></div>
-          ) : (
-            <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-              <button className="btn btn-ghost" onClick={() => setStep(2)}>← Back</button>
-              <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={launchCampaign}>⚡ Launch Campaign on Meta</button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── RESEARCH PAGE ────────────────────────────────────────────────────────────
-function Research() {
-  const [form, setForm] = useState({ niche: '', competitor: '' });
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState('');
-
-  const analyze = async () => {
-    if (!form.niche) { setErr('Enter a niche'); return; }
-    setLoading(true); setErr(''); setResult(null);
-    try {
-      const r = await axios.post('/api/research/analyze', form);
-      setResult(r.data);
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Analysis failed');
-    } finally { setLoading(false); }
-  };
-
-  return (
-    <div>
-      <div className="page-header">
-        <div className="page-title">Ad Research</div>
-        <div className="page-subtitle">Claude analyses winning patterns in your niche</div>
-      </div>
-
-      <div style={{ maxWidth: 640 }}>
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">Research Brief</div>
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Niche / Industry <em>*</em></label>
-              <input className="form-input" placeholder="e.g. Perfumes, Protein Supplements" value={form.niche} onChange={e => setForm({ ...form, niche: e.target.value })} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Competitor (optional)</label>
-              <input className="form-input" placeholder="e.g. Boat, Mamaearth" value={form.competitor} onChange={e => setForm({ ...form, competitor: e.target.value })} />
-            </div>
-          </div>
-          <div className="info-box">
-            <strong>How it works</strong>
-            Claude analyses winning ad patterns in your niche and generates ad copy inspired by what works. For direct competitor research, use Meta Ad Library: facebook.com/ads/library
-          </div>
-          {err && <div className="alert alert-error">{err}</div>}
-          <button className="btn btn-secondary btn-lg" onClick={analyze} disabled={loading}>
-            {loading ? 'Analysing...' : '◎ Analyse & Generate Winning Ads'}
-          </button>
-        </div>
-
-        {loading && <div className="loading-wrap"><div className="spinner"></div><div className="loading-text">Claude is researching winning patterns...</div></div>}
-
-        {result && (
-          <div>
-            <div className="sec-title">Strategic Insights</div>
-            <div className="card" style={{ marginBottom: 20 }}>
-              {result.insights?.map((ins, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 10, fontSize: 13 }}>
-                  <span style={{ color: 'var(--accent)', fontFamily: 'var(--fm)' }}>0{i + 1}</span>
-                  <span>{ins}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="sec-title">Winning Hook Patterns</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-              {result.hooks?.map((h, i) => (
-                <div key={i} className="badge badge-blue" style={{ padding: '6px 12px', fontSize: 12 }}>{h}</div>
-              ))}
-            </div>
-
-            <div className="sec-title">Generated Ad Copies</div>
-            {result.variants?.map((v, i) => (
-              <div key={i} className="copy-card">
-                <div className="copy-card-header">
-                  <span className="copy-angle">{v.angle}</span>
-                  <span className={`copy-score ${v.isHot ? 'hot' : ''}`}>{v.isHot ? '🔥 ' : ''}{v.score}</span>
-                </div>
-                <div className="copy-headline">{v.headline}</div>
-                <div className="copy-body">{v.primaryText}</div>
-                {v.rationale && <div style={{ fontSize: 11, color: 'var(--blue)', fontFamily: 'var(--fm)', marginTop: 8 }}>WHY IT WORKS: {v.rationale}</div>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 32 }}>
+            {[
+              { label: 'Campaign ID', value: result.campaignId },
+              { label: 'Ad Sets', value: result.summary.adsets },
+              { label: 'Total Ads', value: result.summary.ads },
+              { label: 'Daily Budget', value: result.summary.totalDailyBudget },
+            ].map(s => (
+              <div key={s.label} style={{ background: '#111', borderRadius: 10, padding: '14px 16px' }}>
+                <div style={{ fontSize: 11, color: S.muted, marginBottom: 6, textTransform: 'uppercase' }}>{s.label}</div>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{s.value}</div>
               </div>
             ))}
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
-// ─── REPORTING PAGE ───────────────────────────────────────────────────────────
-function Reporting() {
-  const [clients, setClients] = useState([]);
-  const [selectedClient, setSelectedClient] = useState('');
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(null);
-
-  useEffect(() => {
-    axios.get('/api/clients').then(r => setClients(r.data));
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    const params = selectedClient ? `?clientId=${selectedClient}` : '';
-    axios.get(`/api/reporting/overview${params}`)
-      .then(r => setData(r.data))
-      .finally(() => setLoading(false));
-  }, [selectedClient]);
-
-  const syncCampaign = async (id) => {
-    setSyncing(id);
-    try {
-      await axios.post(`/api/campaigns/${id}/sync`);
-      const params = selectedClient ? `?clientId=${selectedClient}` : '';
-      const r = await axios.get(`/api/reporting/overview${params}`);
-      setData(r.data);
-    } catch (e) {
-      alert('Sync failed: ' + (e.response?.data?.error || e.message));
-    } finally { setSyncing(null); }
-  };
-
-  const t = data?.totals || {};
-  const campaigns = data?.campaigns || [];
-
-  return (
-    <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <div className="page-title">Reporting</div>
-          <div className="page-subtitle">Live campaign performance across all clients</div>
-        </div>
-        <select className="form-input" style={{ width: 220 }} value={selectedClient} onChange={e => setSelectedClient(e.target.value)}>
-          <option value="">All Clients</option>
-          {clients.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
-        </select>
-      </div>
-
-      {loading ? (
-        <div className="loading-wrap"><div className="spinner"></div></div>
-      ) : (
-        <>
-          <div className="metrics-grid" style={{ marginBottom: 24 }}>
-            <div className="metric-card">
-              <div className="metric-label">Total Spend</div>
-              <div className="metric-value gold">₹{(t.spend || 0).toFixed(0)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Total Revenue</div>
-              <div className="metric-value green">₹{(t.revenue || 0).toFixed(0)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">ROAS</div>
-              <div className="metric-value blue">{(t.roas || 0).toFixed(2)}x</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">CPA</div>
-              <div className="metric-value">₹{(t.cpa || 0).toFixed(0)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Impressions</div>
-              <div className="metric-value">{(t.impressions || 0).toLocaleString()}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Clicks</div>
-              <div className="metric-value">{(t.clicks || 0).toLocaleString()}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">CTR</div>
-              <div className="metric-value">{(t.ctr || 0).toFixed(2)}%</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-label">Purchases</div>
-              <div className="metric-value">{t.purchases || 0}</div>
-            </div>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <Btn onClick={() => { setStep(0); setCopies([]); setResult(null); }}>Launch Another</Btn>
+            <a href={`https://www.facebook.com/adsmanager/manage/campaigns`} target="_blank" rel="noreferrer">
+              <Btn variant="ghost">Open in Ads Manager ↗</Btn>
+            </a>
           </div>
-
-          <div className="table-wrap">
-            <div className="table-header">
-              <div className="table-title">{campaigns.length} Campaigns</div>
-            </div>
-            {campaigns.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">▲</div>
-                <div className="empty-title">No campaigns yet</div>
-                <div className="empty-sub">Launch a campaign to see reporting here</div>
-              </div>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Campaign</th>
-                    <th>Client</th>
-                    <th>Status</th>
-                    <th>Spend</th>
-                    <th>Revenue</th>
-                    <th>ROAS</th>
-                    <th>CPA</th>
-                    <th>CTR</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {campaigns.map(c => (
-                    <tr key={c.id}>
-                      <td>
-                        <div style={{ fontWeight: 500, fontSize: 13 }}>{c.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--fm)' }}>{c.objective?.replace('OUTCOME_', '')}</div>
-                      </td>
-                      <td style={{ color: 'var(--muted)', fontSize: 12 }}>{c.clientName}</td>
-                      <td><span className={`badge badge-${c.status === 'ACTIVE' ? 'green' : c.status === 'PAUSED' ? 'gold' : 'gray'}`}>{c.status}</span></td>
-                      <td>₹{(c.metrics?.spend || 0).toFixed(0)}</td>
-                      <td style={{ color: 'var(--green)' }}>₹{(c.metrics?.revenue || 0).toFixed(0)}</td>
-                      <td style={{ color: 'var(--blue)', fontWeight: 600 }}>{(c.metrics?.roas || 0).toFixed(2)}x</td>
-                      <td>₹{(c.metrics?.cpa || 0).toFixed(0)}</td>
-                      <td>{(c.metrics?.ctr || 0).toFixed(2)}%</td>
-                      <td>
-                        <button className="btn btn-ghost btn-sm" onClick={() => syncCampaign(c.id)} disabled={syncing === c.id}>
-                          {syncing === c.id ? '...' : '↻ Sync'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </>
+        </Card>
       )}
     </div>
   );
 }
 
-// ─── APP ──────────────────────────────────────────────────────────────────────
-function App() {
+// ─── REPORTING ────────────────────────────────────────────────────────────────
+function Reporting() {
+  const { apiFetch } = useAuth();
+  const [clients, setClients] = useState([]);
+  const [sel, setSel] = useState({ clientId: '', datePreset: 'last_7d', level: 'campaign' });
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => { apiFetch('/api/clients').then(setClients).catch(() => {}); }, []);
+
+  const fetchReport = async () => {
+    const client = clients.find(c => c._id === sel.clientId);
+    if (!client) return;
+    setLoading(true); setErr('');
+    try {
+      const res = await apiFetch('/api/report', {
+        method: 'POST',
+        body: JSON.stringify({ adAccountId: client.adAccountId, accessToken: client.accessToken, datePreset: sel.datePreset, level: sel.level })
+      });
+      setData(res.data || []);
+    } catch (e) { setErr(e.message); } finally { setLoading(false); }
+  };
+
+  const getMetric = (row, type) => {
+    const actions = row.actions || [];
+    const found = actions.find(a => a.action_type === type);
+    return found ? found.value : '—';
+  };
+
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/dashboard" element={<AppLayout><Dashboard /></AppLayout>} />
-          <Route path="/clients" element={<AppLayout><Clients /></AppLayout>} />
-          <Route path="/launch" element={<AppLayout><Launch /></AppLayout>} />
-          <Route path="/research" element={<AppLayout><Research /></AppLayout>} />
-          <Route path="/reporting" element={<AppLayout><Reporting /></AppLayout>} />
-          <Route path="*" element={<Navigate to="/dashboard" />} />
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+    <div className="fade">
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 28 }}>Reporting</h1>
+      <Card style={{ marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 16, alignItems: 'end' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Client</label>
+            <select value={sel.clientId} onChange={e => setSel({ ...sel, clientId: e.target.value })}>
+              <option value="">— Select client —</option>
+              {clients.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Date Range</label>
+            <select value={sel.datePreset} onChange={e => setSel({ ...sel, datePreset: e.target.value })}>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="last_7d">Last 7 days</option>
+              <option value="last_14d">Last 14 days</option>
+              <option value="last_30d">Last 30 days</option>
+              <option value="this_month">This month</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1 }}>Level</label>
+            <select value={sel.level} onChange={e => setSel({ ...sel, level: e.target.value })}>
+              <option value="campaign">Campaign</option>
+              <option value="adset">Ad Set</option>
+              <option value="ad">Ad</option>
+            </select>
+          </div>
+          <Btn onClick={fetchReport} disabled={loading || !sel.clientId}>
+            {loading ? <><span className="spin">⟳</span></> : '▲ Pull Report'}
+          </Btn>
+        </div>
+      </Card>
+
+      {err && <div style={{ color: S.red, marginBottom: 16, padding: '12px 16px', background: '#1f0000', borderRadius: 8 }}>{err}</div>}
+
+      {data && (
+        <Card style={{ overflowX: 'auto' }}>
+          {data.length === 0 ? (
+            <div style={{ color: S.muted, textAlign: 'center', padding: 32 }}>No data for this period.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${S.border}` }}>
+                  {['Name', 'Spend (₹)', 'Impressions', 'Clicks', 'CTR', 'CPM', 'Purchases', 'ROAS'].map(h => (
+                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: S.muted, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((row, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${S.border}`, transition: 'background 0.15s' }}>
+                    <td style={{ padding: '12px', fontWeight: 600, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.campaign_name || row.adset_name || row.ad_name}</td>
+                    <td style={{ padding: '12px' }}>₹{parseFloat(row.spend || 0).toFixed(0)}</td>
+                    <td style={{ padding: '12px' }}>{parseInt(row.impressions || 0).toLocaleString()}</td>
+                    <td style={{ padding: '12px' }}>{parseInt(row.clicks || 0).toLocaleString()}</td>
+                    <td style={{ padding: '12px' }}>{parseFloat(row.ctr || 0).toFixed(2)}%</td>
+                    <td style={{ padding: '12px' }}>₹{parseFloat(row.cpm || 0).toFixed(0)}</td>
+                    <td style={{ padding: '12px' }}>{getMetric(row, 'purchase')}</td>
+                    <td style={{ padding: '12px', color: row.purchase_roas?.[0]?.value > 2 ? S.green : S.text }}>
+                      {row.purchase_roas?.[0]?.value ? parseFloat(row.purchase_roas[0].value).toFixed(2) + 'x' : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ─── RESEARCH ─────────────────────────────────────────────────────────────────
+function Research() {
+  const { apiFetch } = useAuth();
+  const [prompt, setPrompt] = useState('');
+  const [response, setResponse] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const presets = [
+    'Write 5 high-converting ad hooks for a perfume brand targeting men 25-40 in India',
+    'What are the best Meta ad strategies for DTC ecommerce in 2026?',
+    'Give me 3 creative angles for a Buy 2 Get 1 FREE perfume offer',
+    'Analyze what makes a high ROAS Facebook ad for fashion brands',
+    'Write 5 different UGC-style ad scripts for a skincare brand',
+  ];
+
+  const ask = async () => {
+    setLoading(true); setResponse('');
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          system: 'You are an expert Meta ads strategist and DTC copywriter. Give concise, actionable, specific responses. Format your answers clearly.',
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      const data = await res.json();
+      setResponse(data.content?.map(c => c.text).join('') || 'No response');
+    } catch (e) { setResponse('Error: ' + e.message); } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="fade">
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>AI Research</h1>
+      <p style={{ color: S.muted, marginBottom: 28 }}>Ask anything about Meta ads, creative strategy, or copywriting.</p>
+
+      <Card style={{ marginBottom: 24 }}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: S.muted, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Quick Prompts</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {presets.map(p => (
+              <button key={p} onClick={() => setPrompt(p)} style={{
+                background: '#111', border: `1px solid ${S.border}`, color: S.muted,
+                borderRadius: 20, padding: '6px 14px', fontSize: 12, cursor: 'pointer',
+                transition: 'all 0.15s'
+              }}>{p.substring(0, 50)}...</button>
+            ))}
+          </div>
+        </div>
+        <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={4} placeholder="Ask about ad strategy, copy, audiences, creative angles..."
+          style={{ background: '#111', border: `1px solid ${S.border}`, color: S.text, borderRadius: 8, padding: '12px 14px', width: '100%', fontSize: 14, outline: 'none', resize: 'vertical', marginBottom: 12 }} />
+        <Btn onClick={ask} disabled={loading || !prompt.trim()}>
+          {loading ? <><span className="spin">⟳</span> Thinking...</> : '◈ Ask AI'}
+        </Btn>
+      </Card>
+
+      {response && (
+        <Card className="fade">
+          <div style={{ fontSize: 12, color: S.orange, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 16 }}>AI Response</div>
+          <div style={{ fontSize: 14, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: S.text }}>{response}</div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ─── PROTECTED ROUTE ──────────────────────────────────────────────────────────
+function Protected({ children }) {
+  const { token } = useAuth();
+  return token ? children : <Navigate to="/login" />;
+}
+
+// ─── APP ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  return (
+    <>
+      <style>{css}</style>
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/dashboard" element={<Protected><AppLayout><Dashboard /></AppLayout></Protected>} />
+            <Route path="/clients" element={<Protected><AppLayout><Clients /></AppLayout></Protected>} />
+            <Route path="/launch" element={<Protected><AppLayout><Launch /></AppLayout></Protected>} />
+            <Route path="/reporting" element={<Protected><AppLayout><Reporting /></AppLayout></Protected>} />
+            <Route path="/research" element={<Protected><AppLayout><Research /></AppLayout></Protected>} />
+            <Route path="*" element={<Navigate to="/dashboard" />} />
+          </Routes>
+        </AuthProvider>
+      </BrowserRouter>
+    </>
   );
 }
 
